@@ -2,13 +2,13 @@
   "name": "skillbridge-api",
   "version": "1.0.0",
   "description": "SkillBridge API server",
-  "main": "app.js",
+  "main": "server.js",
   "engines": {
-    "node": "24.x"
+    "node": "22.x"
   },
   "scripts": {
-    "start": "node app.js",
-    "dev": "nodemon app.js",
+    "start": "node server.js",
+    "dev": "nodemon server.js",
     "build": "npx prisma generate",
     "postinstall": "npx prisma generate",
     "seed": "node prisma/seed.js",
