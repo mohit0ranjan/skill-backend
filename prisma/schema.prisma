@@ -1,0 +1,225 @@
+generator client {
+  provider   = "prisma-client-js"
+  engineType = "library"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id              String    @id @default(uuid())
+  name            String
+  email           String    @unique
+  password        String
+  college         String?
+  year            String?
+  role            Role      @default(USER)
+  emailVerified   Boolean   @default(false)
+  emailVerifiedAt DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  internships      UserInternship[]
+  submissions      Submission[]
+  finalSubmissions FinalProjectSubmission[]
+  certificates     Certificate[]
+  payments         Payment[]
+  tickets          Ticket[]
+
+  @@index([email])
+  @@index([role])
+}
+
+model Internship {
+  id          String   @id @default(uuid())
+  title       String
+  domain      String
+  duration    String
+  level       String
+  price       Int      @default(0)
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tasks            Task[]
+  userInternships  UserInternship[]
+  finalSubmissions FinalProjectSubmission[]
+  certificates     Certificate[]
+  payments         Payment[]
+
+  @@index([domain])
+}
+
+model Task {
+  id           String   @id @default(uuid())
+  internshipId String
+  title        String
+  description  String
+  week         Int
+  resources    String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  internship  Internship   @relation(fields: [internshipId], references: [id], onDelete: Cascade)
+  submissions Submission[]
+
+  @@index([internshipId])
+}
+
+model UserInternship {
+  id             String               @id @default(uuid())
+  userId         String
+  internshipId   String
+  status         UserInternshipStatus @default(STARTED)
+  progress       Int                  @default(0)
+  completedWeeks Int                  @default(0)
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  internship Internship @relation(fields: [internshipId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, internshipId])
+}
+
+model FinalProjectSubmission {
+  id           String                  @id @default(uuid())
+  userId       String
+  internshipId String
+  projectTitle String
+  projectLink  String
+  description  String
+  fileUrl      String?
+  status       ProjectSubmissionStatus @default(SUBMITTED)
+  feedback     String?
+  submittedAt  DateTime                @default(now())
+  updatedAt    DateTime                @updatedAt
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  internship Internship @relation(fields: [internshipId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, internshipId])
+  @@index([userId])
+  @@index([internshipId])
+  @@index([status])
+}
+
+model Submission {
+  id         String           @id @default(uuid())
+  userId     String
+  taskId     String
+  githubLink String
+  status     SubmissionStatus @default(SUBMITTED)
+  feedback   String?
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, taskId])
+  @@index([userId])
+  @@index([status])
+}
+
+model Certificate {
+  id            String   @id @default(uuid())
+  userId        String
+  internshipId  String
+  certificateId String   @unique
+  issuedDate    DateTime @default(now())
+  isPaid        Boolean  @default(false)
+  updatedAt     DateTime @updatedAt
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  internship Internship @relation(fields: [internshipId], references: [id], onDelete: Cascade)
+  payments   Payment[]
+
+  @@unique([userId, internshipId])
+  @@index([userId])
+  @@index([internshipId])
+  @@index([certificateId])
+  @@index([isPaid])
+}
+
+model Payment {
+  id                String        @id @default(uuid())
+  userId            String
+  amount            Int
+  currency          String        @default("INR")
+  status            PaymentStatus @default(PENDING)
+  razorpayId        String?       @unique
+  razorpayOrderId   String?       @unique
+  razorpaySignature String?
+  certificateId     String?
+  internshipId      String?
+  idempotencyKey    String?       @unique
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  certificate Certificate? @relation(fields: [certificateId], references: [id], onDelete: SetNull)
+  internship  Internship?  @relation(fields: [internshipId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([internshipId])
+  @@index([certificateId])
+  @@index([razorpayOrderId])
+  @@index([status])
+}
+
+model Ticket {
+  id        String       @id @default(uuid())
+  userId    String
+  subject   String
+  message   String
+  status    TicketStatus @default(OPEN)
+  replyMessage String?
+  repliedAt DateTime?
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ENUMS
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum UserInternshipStatus {
+  STARTED
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum SubmissionStatus {
+  SUBMITTED
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+}
+
+enum ProjectSubmissionStatus {
+  SUBMITTED
+  UNDER_REVIEW
+  REVIEWED
+  APPROVED
+  REJECTED
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
