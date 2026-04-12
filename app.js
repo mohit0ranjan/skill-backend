@@ -38,14 +38,15 @@ app.use((req, res, next) => {
 // CORS — restrict to frontend origin in production
 const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:3000')
   .split(',')
-  .map(o => o.trim());
+  .map(o => o.trim().replace(/\/$/, '')); // Removes trailing slash if added accidentally
 
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow requests with no origin (curl, health checks, server-to-server)
-    if (!origin || allowedOrigins.includes(origin)) {
+    // Allow requests with no origin (curl, server-to-server) or matching origins
+    if (!origin || allowedOrigins.includes(origin.replace(/\/$/, ''))) {
       callback(null, true);
     } else {
+      console.warn(`Blocked by CORS: origin ${origin} not in allowed list [${allowedOrigins}]`);
       callback(null, false);
     }
   },
