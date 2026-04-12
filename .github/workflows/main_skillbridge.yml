@@ -58,6 +58,11 @@ jobs:
         with:
           name: backend-app
 
+      - name: Verify Prisma client after artifact download
+        run: |
+          test -f node_modules/.prisma/client/default.js
+          test -f node_modules/@prisma/client/default.js
+
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v3
         with:
