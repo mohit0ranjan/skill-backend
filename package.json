@@ -24,9 +24,7 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "@prisma/adapter-pg": "^7.7.0",
-    "@prisma/client": "latest",
-    "@prisma/extension-accelerate": "^3.0.1",
+    "@prisma/client": "^5.22.0",
     "bcrypt": "^6.0.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.1",
@@ -44,7 +42,7 @@
   "devDependencies": {
     "jest": "^30.3.0",
     "nodemon": "^3.1.14",
-    "prisma": "latest",
+    "prisma": "^5.22.0",
     "supertest": "^7.2.2"
   }
 }
