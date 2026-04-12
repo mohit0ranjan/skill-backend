@@ -1,7 +1,3 @@
-const fs = require('fs');
-const path = require('path');
-const { PrismaPg } = require('@prisma/adapter-pg');
-const { Pool } = require('pg');
 const { PrismaClient } = require('@prisma/client');
 
 // ---------------------------------------------------------------------------
@@ -16,44 +12,10 @@ function buildClient() {
 
   if (!databaseUrl) {
     console.error('❌ DATABASE_URL is not set. Prisma client will NOT connect.');
-    // Return a PrismaClient with no adapter; queries will fail at runtime but
-    // the process won't crash during startup.
     return new PrismaClient();
   }
 
-  // Try Accelerate first
-  let accelerateUrl;
-  try {
-    accelerateUrl = process.env.ACCELERATE_URL || process.env.PRISMA_ACCELERATE_URL;
-  } catch {
-    accelerateUrl = null;
-  }
-
-  if (accelerateUrl) {
-    try {
-      const { withAccelerate } = require('@prisma/extension-accelerate');
-      return new PrismaClient({ accelerateUrl }).$extends(withAccelerate());
-    } catch (err) {
-      console.warn('⚠️  Accelerate extension unavailable, falling back to direct connection:', err.message);
-    }
-  }
-
-  // Direct Neon / PostgreSQL connection via pg adapter
-  const pool = new Pool({
-    connectionString: databaseUrl,
-    // Azure / Neon best practices
-    max: 5,                       // Keep pool small for containers
-    idleTimeoutMillis: 30_000,    // Free idle connections after 30 s
-    connectionTimeoutMillis: 10_000,
-  });
-
-  // Surface pool-level errors instead of crashing
-  pool.on('error', (err) => {
-    console.error('🔴 PG Pool error (background):', err.message);
-  });
-
-  const adapter = new PrismaPg(pool);
-  return new PrismaClient({ adapter });
+  return new PrismaClient();
 }
 
 // Lazily build once & cache
