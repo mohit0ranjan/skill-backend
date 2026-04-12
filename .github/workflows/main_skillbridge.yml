@@ -3,6 +3,10 @@
 
 name: Build and deploy Node.js app to Azure Web App - skillbridge
 
+env:
+  AZURE_WEBAPP_NAME: skillbridge
+  AZURE_RESOURCE_GROUP: skillbridge_group
+
 on:
   push:
     branches:
@@ -55,11 +59,23 @@ jobs:
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_07C89004B041434E8669C061B9818297 }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_FFC9383A0349478B81B1A7E8D6930F18 }}
 
+      - name: Configure App Service startup and build settings
+        run: |
+          az webapp config set \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$AZURE_WEBAPP_NAME" \
+            --startup-file "npm start"
+
+          az webapp config appsettings set \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$AZURE_WEBAPP_NAME" \
+            --settings SCM_DO_BUILD_DURING_DEPLOYMENT=true ENABLE_ORYX_BUILD=true
+
       - name: 'Deploy to Azure Web App'
         id: deploy-to-webapp
         uses: azure/webapps-deploy@v3
         with:
-          app-name: 'skillbridge'
+          app-name: ${{ env.AZURE_WEBAPP_NAME }}
           slot-name: 'Production'
           package: .
           
