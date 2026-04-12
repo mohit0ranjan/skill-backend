@@ -51,10 +51,11 @@ jobs:
         with:
           name: node-app
       
-      - name: 'Deploy to Azure Web App'
-        id: deploy-to-webapp
-        uses: azure/webapps-deploy@v2
-        with:
-          app-name: ${{ env.AZURE_WEBAPP_NAME }}
-          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
-          package: .
+      - name: Zip Artifact
+        run: zip -r app.zip .
+        
+      - name: Deploy to Azure via ZipDeploy
+        run: |
+          curl -X POST -u "\$skillbridge:CLPDKsT47kPkGYMxLgNBxd1R1MyBku9hgwX2rbwkPrFNcD4yCNbpdqcdusgs" \
+               --data-binary @"app.zip" \
+               https://skillbridge-atguexbkckecaygq.scm.centralindia-01.azurewebsites.net/api/zipdeploy
