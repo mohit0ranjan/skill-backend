@@ -128,6 +128,26 @@ app.get('/health', (req, res) => {
 });
 
 /**
+ * Root endpoint
+ */
+app.get('/', (req, res) => {
+  const response = ApiResponse.success({
+    status: 'ok',
+    service: 'SkillBridge API',
+    health: '/health',
+    docs: '/api/docs',
+  });
+  res.json(response);
+});
+
+/**
+ * Favicon (avoid noisy 404 logs for browser auto-requests)
+ */
+app.get('/favicon.ico', (req, res) => {
+  res.status(204).end();
+});
+
+/**
  * Api Documentation
  */
 app.get('/api/docs', (req, res) => {
