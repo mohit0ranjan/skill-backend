@@ -265,11 +265,13 @@ app.use((err, req, res, next) => {
 
 const PORT = process.env.PORT || 5000;
 const NODE_ENV = process.env.NODE_ENV || 'production';
+let server;
 
-// IMPORTANT: Azure App Service requires app.listen() to run unconditionally.
-// The previous `require.main === module` guard blocked Azure startup.
-const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log(`
+// Azure runs `node app.js` directly → require.main === module is TRUE.
+// Tests do `require('./app')` → require.main !== module, so listen is skipped.
+if (require.main === module) {
+  server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`
 ╔════════════════════════════════════════╗
 ║     🚀 SkillBridge API Server 🚀      ║
 ╠════════════════════════════════════════╣
@@ -277,14 +279,17 @@ const server = app.listen(PORT, '0.0.0.0', () => {
 ║  Port: ${PORT.toString().padEnd(33)} ║
 ║  Status: ✅ Running                   ║
 ╚════════════════════════════════════════╝
-  `);
-  console.log(`📍 API: http://0.0.0.0:${PORT}`);
-  console.log(`📍 Health: http://0.0.0.0:${PORT}/health`);
-  console.log(`📍 Docs: http://0.0.0.0:${PORT}/api/docs`);
+    `);
+    console.log(`📍 API: http://0.0.0.0:${PORT}`);
+    console.log(`📍 Health: http://0.0.0.0:${PORT}/health`);
+    console.log(`📍 Docs: http://0.0.0.0:${PORT}/api/docs`);
 
-  // Non-blocking DB connection test logged after startup
-  prisma.testConnection().catch(() => {});
-});
+    // Non-blocking DB connection test logged after startup
+    if (typeof prisma.testConnection === 'function') {
+      prisma.testConnection().catch(() => {});
+    }
+  });
+}
 
 // ============================================
 // GRACEFUL SHUTDOWN
@@ -292,6 +297,11 @@ const server = app.listen(PORT, '0.0.0.0', () => {
 
 function shutdown(signal) {
   console.log(`\n${signal} received. Starting graceful shutdown...`);
+
+  if (!server) {
+    process.exit(0);
+    return;
+  }
 
   server.close(async (err) => {
     if (err) {
@@ -302,8 +312,10 @@ function shutdown(signal) {
 
     // Disconnect Prisma pool
     try {
-      await prisma.disconnect();
-      console.log('Database pool closed.');
+      if (typeof prisma.disconnect === 'function') {
+        await prisma.disconnect();
+        console.log('Database pool closed.');
+      }
     } catch (e) {
       console.error('Error closing database pool:', e.message);
     }
@@ -333,3 +345,4 @@ process.on('uncaughtException', (err) => {
 });
 
 module.exports = app;
+
