@@ -39,12 +39,12 @@
     "nodemailer": "^8.0.5",
     "pdfkit": "^0.18.0",
     "pg": "^8.20.0",
+    "prisma": "latest",
     "razorpay": "^2.9.6"
   },
   "devDependencies": {
     "jest": "^30.3.0",
     "nodemon": "^3.1.14",
-    "prisma": "latest",
     "supertest": "^7.2.2"
   }
 }

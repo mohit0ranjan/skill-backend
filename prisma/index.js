@@ -1,6 +1,41 @@
-const { PrismaClient } = require('@prisma/client');
+const fs = require('fs');
+const path = require('path');
+const { execSync } = require('child_process');
 const { PrismaPg } = require('@prisma/adapter-pg');
 const { Pool } = require('pg');
+
+function ensurePrismaRuntime() {
+  const prismaRuntimeFile = path.join(__dirname, '..', 'node_modules', '.prisma', 'client', 'default.js');
+  if (fs.existsSync(prismaRuntimeFile)) {
+    return;
+  }
+
+  console.warn('[prisma] Missing generated runtime. Running "npx prisma generate"...');
+  execSync('npx prisma generate', {
+    cwd: path.join(__dirname, '..'),
+    stdio: 'inherit',
+  });
+
+  if (!fs.existsSync(prismaRuntimeFile)) {
+    throw new Error('Prisma runtime generation failed: node_modules/.prisma/client/default.js not found.');
+  }
+}
+
+function loadPrismaClient() {
+  try {
+    return require('@prisma/client');
+  } catch (err) {
+    const isPrismaRuntimeMissing = err && err.code === 'MODULE_NOT_FOUND' && String(err.message).includes('.prisma/client/default');
+    if (!isPrismaRuntimeMissing) {
+      throw err;
+    }
+
+    ensurePrismaRuntime();
+    return require('@prisma/client');
+  }
+}
+
+const { PrismaClient } = loadPrismaClient();
 
 // ---------------------------------------------------------------------------
 // Singleton Prisma client – prevents multiple connection pools in
