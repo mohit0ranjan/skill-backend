@@ -33,12 +33,18 @@ jobs:
       - name: Build
         run: npm run build --if-present
 
+      - name: Verify Prisma client artifact
+        run: |
+          test -f node_modules/.prisma/client/default.js
+          test -f node_modules/@prisma/client/default.js
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: backend-app
           path: .
           if-no-files-found: error
+          include-hidden-files: true
 
   deploy:
     runs-on: ubuntu-latest
