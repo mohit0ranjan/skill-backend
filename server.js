@@ -1,7 +1,41 @@
 require('dotenv').config();
 
-const app = require('./app');
-const prisma = require('./prisma');
+const fs = require('fs');
+const path = require('path');
+const { execSync } = require('child_process');
+
+function ensurePrismaClient() {
+  const prismaRuntimeFile = path.join(__dirname, 'node_modules', '.prisma', 'client', 'default.js');
+  const prismaDefaultEntry = path.join(__dirname, 'node_modules', '@prisma', 'client', 'default.js');
+
+  console.log('[startup] Checking Prisma client artifacts...');
+  console.log(`[startup] .prisma runtime present: ${fs.existsSync(prismaRuntimeFile)}`);
+  console.log(`[startup] @prisma/client default present: ${fs.existsSync(prismaDefaultEntry)}`);
+
+  if (fs.existsSync(prismaRuntimeFile) && fs.existsSync(prismaDefaultEntry)) {
+    return;
+  }
+
+  console.warn('[startup] Prisma client files missing. Running "npx prisma generate" as fallback.');
+  execSync('npx prisma generate', { stdio: 'inherit' });
+
+  if (!fs.existsSync(prismaRuntimeFile) || !fs.existsSync(prismaDefaultEntry)) {
+    throw new Error('Prisma client generation failed. Missing node_modules/.prisma/client/default.js after generate.');
+  }
+}
+
+ensurePrismaClient();
+
+let app;
+let prisma;
+
+try {
+  app = require('./app');
+  prisma = require('./prisma');
+} catch (err) {
+  console.error('[startup] Failed to initialize app/prisma modules:', err);
+  process.exit(1);
+}
 
 const PORT = Number.parseInt(process.env.PORT, 10) || 3000;
 const HOST = '0.0.0.0';
