@@ -10,6 +10,7 @@ node_modules/
 
 # Prisma generated client
 /generated/prisma
+.prisma
 
 # OS files
 .DS_Store
