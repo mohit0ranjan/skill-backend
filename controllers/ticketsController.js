@@ -2,21 +2,21 @@ const prisma = require('../prisma');
 const { ApiResponse, ApiError } = require('../utils/apiResponse');
 const { emailService } = require('../services/email.service');
 
-const createTicket = async (req, res) => {
+const createTicket = async (req, res, next) => {
   try {
     const { subject, message } = req.body;
     const userId = req.user.id;
 
     if (!subject || !message) {
-      return res.status(400).json({ message: 'Subject and message are required' });
+      return next(new ApiError('Subject and message are required', 400, 'VALIDATION_ERROR'));
     }
 
     if (subject.length > 200) {
-      return res.status(400).json({ message: 'Subject must be under 200 characters' });
+      return next(new ApiError('Subject must be under 200 characters', 400, 'VALIDATION_ERROR'));
     }
 
     if (message.length > 5000) {
-      return res.status(400).json({ message: 'Message must be under 5000 characters' });
+      return next(new ApiError('Message must be under 5000 characters', 400, 'VALIDATION_ERROR'));
     }
 
     const ticket = await prisma.ticket.create({
@@ -28,13 +28,13 @@ const createTicket = async (req, res) => {
       }
     });
 
-    res.status(201).json({ message: 'Ticket created successfully', ticket });
+    res.status(201).json(ApiResponse.success(ticket, 'Ticket created successfully', 201));
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    next(new ApiError(`Failed to create ticket: ${error.message}`, 500, 'TICKET_CREATE_FAILED'));
   }
 };
 
-const getTickets = async (req, res) => {
+const getTickets = async (req, res, next) => {
   try {
     const userId = req.user.id;
     
@@ -43,13 +43,13 @@ const getTickets = async (req, res) => {
       orderBy: { createdAt: 'desc' }
     });
 
-    res.json(tickets);
+    res.json(ApiResponse.success(tickets, 'Tickets retrieved successfully', 200));
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    next(new ApiError(`Failed to fetch tickets: ${error.message}`, 500, 'TICKETS_FETCH_FAILED'));
   }
 };
 
-const getAllTickets = async (req, res) => {
+const getAllTickets = async (req, res, next) => {
   try {
     const { status } = req.query;
     const where = status ? { status } : {};
@@ -62,17 +62,17 @@ const getAllTickets = async (req, res) => {
 
     res.json(ApiResponse.success(tickets, 'Tickets retrieved successfully', 200));
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    next(new ApiError(`Failed to fetch tickets: ${error.message}`, 500, 'TICKETS_FETCH_FAILED'));
   }
 };
 
-const updateTicketStatus = async (req, res) => {
+const updateTicketStatus = async (req, res, next) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
 
     if (!status) {
-      return res.status(400).json({ message: 'Status is required' });
+      return next(new ApiError('Status is required', 400, 'VALIDATION_ERROR'));
     }
 
     const ticket = await prisma.ticket.update({
@@ -82,11 +82,14 @@ const updateTicketStatus = async (req, res) => {
 
     res.json(ApiResponse.success(ticket, 'Ticket updated successfully', 200));
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    if (error.code === 'P2025') {
+      return next(new ApiError('Ticket not found', 404, 'TICKET_NOT_FOUND'));
+    }
+    next(new ApiError(`Failed to update ticket: ${error.message}`, 500, 'TICKET_UPDATE_FAILED'));
   }
 };
 
-const replyToTicket = async (req, res) => {
+const replyToTicket = async (req, res, next) => {
   try {
     const { ticketId, reply, status } = req.validatedBody;
 
@@ -96,7 +99,7 @@ const replyToTicket = async (req, res) => {
     });
 
     if (!ticket) {
-      return res.status(404).json({ message: 'Ticket not found' });
+      return next(new ApiError('Ticket not found', 404, 'TICKET_NOT_FOUND'));
     }
 
     const updatedTicket = await prisma.ticket.update({
@@ -124,7 +127,7 @@ const replyToTicket = async (req, res) => {
 
     res.json(ApiResponse.success({ ...updatedTicket, emailSent }, 'Reply sent successfully', 200));
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    next(new ApiError(`Failed to reply to ticket: ${error.message}`, 500, 'TICKET_REPLY_FAILED'));
   }
 };
 

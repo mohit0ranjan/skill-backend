@@ -1,11 +1,16 @@
 {
-  "name": "backend",
+  "name": "skillbridge-api",
   "version": "1.0.0",
   "description": "SkillBridge API server",
   "main": "app.js",
+  "engines": {
+    "node": "18.x"
+  },
   "scripts": {
     "start": "node app.js",
     "dev": "nodemon app.js",
+    "build": "npx prisma generate",
+    "postinstall": "npx prisma generate",
     "seed": "node prisma/seed.js",
     "test": "jest",
     "test:watch": "jest --watch",
@@ -34,12 +39,12 @@
     "nodemailer": "^8.0.5",
     "pdfkit": "^0.18.0",
     "pg": "^8.20.0",
+    "prisma": "^7.7.0",
     "razorpay": "^2.9.6"
   },
   "devDependencies": {
     "jest": "^30.3.0",
     "nodemon": "^3.1.14",
-    "prisma": "^7.7.0",
     "supertest": "^7.2.2"
   }
 }

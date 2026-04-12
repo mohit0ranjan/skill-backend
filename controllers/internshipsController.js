@@ -89,7 +89,6 @@ const getInternshipById = async (req, res, next) => {
             title: true,
             description: true,
             week: true,
-            deadline: true
           }
         }
       }
@@ -105,7 +104,7 @@ const getInternshipById = async (req, res, next) => {
     }, 'Internship retrieved successfully', 200));
   } catch (error) {
     if (isDatabaseUnavailableError(error) && process.env.NODE_ENV !== 'production') {
-      const internship = getFallbackInternshipById(id);
+      const internship = getFallbackInternshipById(req.params.id);
 
       if (!internship) {
         return next(new ApiError('Internship not found', 404, 'INTERNSHIP_NOT_FOUND'));
