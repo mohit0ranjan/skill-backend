@@ -1,4 +1,6 @@
 const PDFDocument = require('pdfkit');
+const path = require('path');
+const fs = require('fs');
 
 const generateCertificatePdf = async ({ studentName, internship, issueDate, certificateId }) => {
   return new Promise((resolve, reject) => {
@@ -16,9 +18,7 @@ const generateCertificatePdf = async ({ studentName, internship, issueDate, cert
 
       const buffers = [];
       doc.on('data', buffers.push.bind(buffers));
-      doc.on('end', () => {
-        resolve(Buffer.concat(buffers));
-      });
+      doc.on('end', () => resolve(Buffer.concat(buffers)));
 
       const pageWidth = 1120;
       const pageHeight = 792;
@@ -30,12 +30,14 @@ const generateCertificatePdf = async ({ studentName, internship, issueDate, cert
         year: 'numeric',
       });
 
+      // Background and Borders
       doc.rect(0, 0, pageWidth, pageHeight).fill('#f8fafc');
       doc.roundedRect(20, 20, pageWidth - 40, pageHeight - 40, 0).fill('#ffffff').stroke('#e2e8f0');
 
       doc.lineWidth(2).strokeColor('#16a34a');
       doc.rect(borderInset, borderInset, pageWidth - (borderInset * 2), pageHeight - (borderInset * 2)).stroke();
 
+      // Top Header
       doc.font('Helvetica').fillColor('#64748b').fontSize(13).text(`Certificate ID: ${certificateId}`, 60, 40, {
         align: 'right',
         width: pageWidth - 120,
@@ -47,20 +49,24 @@ const generateCertificatePdf = async ({ studentName, internship, issueDate, cert
         characterSpacing: 3,
       });
 
-      doc.font('Times-Bold').fillColor('#0f172a').fontSize(42).text('Certificate of Completion', 0, 152, {
+      // Main Title
+      doc.font('Times-Roman').fillColor('#0f172a').fontSize(42).text('Certificate of Completion', 0, 152, {
         align: 'center',
       });
 
+      // Accent Line
       doc.lineWidth(2).strokeColor('#16a34a');
       doc.moveTo((pageWidth / 2) - 60, 210).lineTo((pageWidth / 2) + 60, 210).stroke();
 
       doc.font('Helvetica').fillColor('#475569').fontSize(18).text('This is to certify that', 0, 238, { align: 'center' });
 
+      // Student Name
       doc.font('Times-Bold').fillColor('#0f172a').fontSize(48).text(studentName, pagePadding, 266, {
         align: 'center',
         width: pageWidth - (pagePadding * 2),
       });
 
+      // Internship Details
       doc.font('Helvetica').fillColor('#475569').fontSize(17).text(
         `has successfully completed the internship program in ${internship} offered by SkillBridge.`,
         pagePadding,
@@ -72,6 +78,7 @@ const generateCertificatePdf = async ({ studentName, internship, issueDate, cert
         }
       );
 
+      // Hidden Watermark Decoration
       doc.save();
       doc.opacity(0.05).fillColor('#16a34a');
       doc.circle(pageWidth / 2, 430, 120).fill();
@@ -82,18 +89,37 @@ const generateCertificatePdf = async ({ studentName, internship, issueDate, cert
       doc.font('Times-Bold').fillColor('#16a34a').fontSize(50).text('SKILLBRIDGE', 0, 408, { align: 'center' });
       doc.restore();
 
+      // Footer - Adding the MSME & Skill India Logos exactly like the UI
       const signatureY = 644;
+      
+      // Calculate paths to the frontend Next.js /public/ folder from backend folder
+      const publicFolder = path.join(__dirname, '../../public');
+      const msmeLogoPath = path.join(publicFolder, 'msme logo.png');
+      const skillIndiaLogoPath = path.join(publicFolder, 'skill india logo.png');
+      const signPath = path.join(publicFolder, 'sign.png');
+
+      // Authority Logos (Bottom Left)
+      doc.font('Helvetica-Bold').fillColor('#475569').fontSize(14).text(`Duration: 4 Weeks`, 60, signatureY - 15);
+      doc.font('Helvetica-Bold').fillColor('#475569').fontSize(14).text(`Issue Date: ${issuedDate}`, 60, signatureY + 8);
+      
+      if (fs.existsSync(msmeLogoPath)) {
+        doc.image(msmeLogoPath, 60, signatureY + 36, { height: 40 });
+      }
+      if (fs.existsSync(skillIndiaLogoPath)) {
+        doc.image(skillIndiaLogoPath, 175, signatureY + 36, { height: 40 });
+      }
+
+      // Signature (Bottom Right)
+      if (fs.existsSync(signPath)) {
+        doc.image(signPath, 840, signatureY - 20, { width: 132 });
+      }
       doc.lineWidth(1).strokeColor('#0f172a');
-      doc.moveTo(60, signatureY).lineTo(260, signatureY).stroke();
-      doc.font('Helvetica').fillColor('#475569').fontSize(14).text('Program Director', 60, signatureY + 10);
-      doc.font('Helvetica').fillColor('#475569').fontSize(14).text('SkillBridge', 60, signatureY + 28);
+      doc.moveTo(820, signatureY + 28).lineTo(1020, signatureY + 28).stroke();
+      doc.font('Helvetica').fillColor('#475569').fontSize(14).text('Program Director', 820, signatureY + 40, { align: 'center', width: 200 });
+      doc.font('Helvetica').fillColor('#475569').fontSize(14).text('SkillBridge Certification Authority', 820, signatureY + 58, { align: 'center', width: 200 });
 
-      doc.font('Helvetica').fillColor('#475569').fontSize(14).text(`Issue Date: ${issuedDate}`, 760, signatureY + 18, {
-        align: 'right',
-        width: 300,
-      });
-
-      doc.font('Helvetica').fillColor('#16a34a').fontSize(13).text(`Verify at: skillbridge.in/verify-certificate?id=${certificateId}`, 60, 690, {
+      // Verification Link
+      doc.font('Helvetica').fillColor('#16a34a').fontSize(13).text(`Verify at: skillbridge.co.in/verify-certificate?id=${certificateId}`, 60, 740, {
         align: 'center',
         width: pageWidth - 120,
       });

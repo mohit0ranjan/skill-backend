@@ -75,6 +75,12 @@ const schemas = {
     reason: Joi.string().max(500).optional().allow('', null),
   }),
 
+  refundPayment: Joi.object({
+    paymentId: Joi.string().uuid().required(),
+    amount: Joi.number().integer().positive().optional(), // paise
+    reason: Joi.string().max(500).optional().allow('', null),
+  }),
+
   // Ticket
   createTicket: Joi.object({
     subject: Joi.string().min(5).max(200).required().trim(),

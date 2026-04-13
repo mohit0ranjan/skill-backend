@@ -31,7 +31,7 @@ const signup = async (req, res, next) => {
     }
 
     // Hash password
-    const salt = await bcrypt.genSalt(12);
+    const salt = await bcrypt.genSalt(10);
     hashedPassword = await bcrypt.hash(password, salt);
 
     // Create user
@@ -87,7 +87,7 @@ const signup = async (req, res, next) => {
         id: `dev-user-${Date.now()}`,
         name: name.trim(),
         email: email.toLowerCase(),
-        password: hashedPassword || bcrypt.hashSync(password, 12),
+        password: hashedPassword || bcrypt.hashSync(password, 10),
         college: college ? college.trim() : null,
         year: year ? year.trim() : null,
         role: 'USER',

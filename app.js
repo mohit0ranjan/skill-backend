@@ -36,11 +36,15 @@ app.use((req, res, next) => {
 });
 
 // CORS — restrict to frontend origin in production
-const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:3000')
-  .split(',')
-  .map(o => o.trim().replace(/\/$/, '')); // Removes trailing slash if added accidentally
+const envOrigins = (process.env.FRONTEND_URL || '').split(',').map(o => o.trim().replace(/\/$/, ''));
+const allowedOrigins = [
+  'https://skillbridge.co.in',
+  'https://www.skillbridge.co.in',
+  'http://localhost:3000',
+  ...envOrigins
+].filter(Boolean);
 
-app.use(cors({
+const corsOptions = {
   origin: (origin, callback) => {
     // Allow requests with no origin (curl, server-to-server) or matching origins
     if (!origin || allowedOrigins.includes(origin.replace(/\/$/, ''))) {
@@ -50,15 +54,22 @@ app.use(cors({
       callback(null, false);
     }
   },
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   credentials: true,
-}));
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  preflightContinue: false,
+  optionsSuccessStatus: 204
+};
+
+app.use(cors(corsOptions));
+// app.use(cors(...)) already handles preflight OPTIONS responses.
 
 // ============================================
 // REQUEST PARSING
 // ============================================
 
 // Razorpay webhook needs the raw body before JSON parsing consumes the stream.
-app.use('/razorpay-webhook', express.raw({ type: 'application/json' }));
+app.use(['/razorpay-webhook', '/webhooks/razorpay'], express.raw({ type: 'application/json' }));
 
 // Body parsing with size limits
 app.use(express.json({ limit: '10kb' }));
@@ -168,13 +179,9 @@ app.get('/favicon.ico', (req, res) => {
  * Api Documentation
  */
 app.get('/api/docs', (req, res) => {
-  const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'http';
-  const host = req.get('host');
-  const inferredBaseUrl = host ? `${protocol}://${host}` : 'http://localhost:3000';
-
   const docs = {
     api: 'SkillBridge API v1',
-    baseUrl: process.env.BACKEND_URL || inferredBaseUrl,
+    baseUrl: process.env.BACKEND_URL || 'http://localhost:5000',
     endpoints: {
       auth: '/auth',
       internships: '/internships',
@@ -262,6 +269,91 @@ app.use((err, req, res, next) => {
     process.env.NODE_ENV === 'development' ? err.message : null
   );
   res.status(500).json(response);
+});
+
+// ============================================
+// START SERVER
+// ============================================
+
+const PORT = process.env.PORT || 5000;
+const NODE_ENV = process.env.NODE_ENV || 'production';
+let server;
+
+// Azure runs `node app.js` directly → require.main === module is TRUE.
+// Tests do `require('./app')` → require.main !== module, so listen is skipped.
+if (require.main === module) {
+  server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`
+╔════════════════════════════════════════╗
+║     🚀 SkillBridge API Server 🚀      ║
+╠════════════════════════════════════════╣
+║  Environment: ${NODE_ENV.padEnd(28)} ║
+║  Port: ${PORT.toString().padEnd(33)} ║
+║  Status: ✅ Running                   ║
+╚════════════════════════════════════════╝
+    `);
+    console.log(`📍 API: http://0.0.0.0:${PORT}`);
+    console.log(`📍 Health: http://0.0.0.0:${PORT}/health`);
+    console.log(`📍 Docs: http://0.0.0.0:${PORT}/api/docs`);
+
+    // Non-blocking DB connection test logged after startup
+    if (typeof prisma.testConnection === 'function') {
+      prisma.testConnection().catch(() => {});
+    }
+  });
+}
+
+// ============================================
+// GRACEFUL SHUTDOWN
+// ============================================
+
+function shutdown(signal) {
+  console.log(`\n${signal} received. Starting graceful shutdown...`);
+
+  if (!server) {
+    process.exit(0);
+    return;
+  }
+
+  server.close(async (err) => {
+    if (err) {
+      console.error('Error during server shutdown:', err);
+      process.exit(1);
+      return;
+    }
+
+    // Disconnect Prisma pool
+    try {
+      if (typeof prisma.disconnect === 'function') {
+        await prisma.disconnect();
+        console.log('Database pool closed.');
+      }
+    } catch (e) {
+      console.error('Error closing database pool:', e.message);
+    }
+
+    console.log('HTTP server closed cleanly.');
+    process.exit(0);
+  });
+
+  // Force exit if graceful shutdown takes too long.
+  setTimeout(() => {
+    console.error('Forcing shutdown after timeout.');
+    process.exit(1);
+  }, 15000).unref();
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('🔴 Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('🔴 Uncaught Exception:', err);
+  // Give time for logs to flush before exiting
+  setTimeout(() => process.exit(1), 1000).unref();
 });
 
 module.exports = app;

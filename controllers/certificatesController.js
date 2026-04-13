@@ -300,7 +300,7 @@ const createOrder = async (req, res, next) => {
       notes: {
         userId,
         internshipId: resolvedInternshipId,
-        internshipTitle: internship.title
+        internshipTitle: Buffer.from((internship.title || '').substring(0, 200), 'utf8').toString('utf8').replace(/[^\x20-\x7F]/g, '')
       }
     };
 
@@ -336,13 +336,13 @@ const createOrder = async (req, res, next) => {
 const verifyPaymentEndpoint = async (req, res, next) => {
   try {
     const { razorpay_order_id, razorpay_payment_id, razorpay_signature, paymentId, internshipId } = req.validatedBody;
-    const userId = req.user.id;
+    const userId = req.user?.id || null;
 
     const paymentWhere = {
       id: paymentId,
-      userId,
       razorpayOrderId: razorpay_order_id,
       ...(internshipId ? { internshipId } : {}),
+      ...(userId ? { userId } : {}),
     };
 
     const payment = await prisma.payment.findFirst({
@@ -463,6 +463,63 @@ const verifyPaymentEndpoint = async (req, res, next) => {
     ));
   } catch (error) {
     next(new ApiError(`Payment verification failed: ${error.message}`, 500, 'VERIFICATION_FAILED'));
+  }
+};
+
+/**
+ * Initiate Razorpay refund for a successful captured payment.
+ * Only owner of the payment can request refund via API.
+ */
+const refundPaymentEndpoint = async (req, res, next) => {
+  try {
+    const { paymentId, amount, reason } = req.validatedBody;
+    const userId = req.user.id;
+
+    if (!paymentService.razorpay) {
+      return next(new ApiError('Payment gateway not configured', 503, 'GATEWAY_DOWN'));
+    }
+
+    const payment = await prisma.payment.findFirst({
+      where: {
+        id: paymentId,
+        userId,
+        status: 'SUCCESS',
+      }
+    });
+
+    if (!payment) {
+      return next(new ApiError('Successful payment record not found for this user', 404, 'PAYMENT_NOT_FOUND'));
+    }
+
+    if (!payment.razorpayId) {
+      return next(new ApiError('Payment is not captured yet', 409, 'PAYMENT_NOT_CAPTURED'));
+    }
+
+    const refundPayload = {
+      ...(amount ? { amount } : {}),
+      ...(reason ? { notes: { reason: String(reason).slice(0, 256) } } : {})
+    };
+
+    const refund = await paymentService.createRefund(payment.razorpayId, refundPayload);
+
+    if (!refund) {
+      return next(new ApiError('Unable to initiate refund', 502, 'REFUND_FAILED'));
+    }
+
+    return res.json(ApiResponse.success(
+      {
+        paymentId: payment.id,
+        razorpayPaymentId: payment.razorpayId,
+        refundId: refund.id,
+        status: refund.status,
+        amount: refund.amount,
+        speedProcessed: refund.speed_processed,
+      },
+      'Refund initiated successfully',
+      200
+    ));
+  } catch (error) {
+    return next(new ApiError(`Refund failed: ${error.message}`, 500, 'REFUND_FAILED'));
   }
 };
 
@@ -863,6 +920,7 @@ const razorpayWebhook = async (req, res, next) => {
 module.exports = {
   createOrder,
   verifyPaymentEndpoint,
+  refundPaymentEndpoint,
   markPaymentFailedEndpoint,
   generateCertificate,
   downloadCertificate,
