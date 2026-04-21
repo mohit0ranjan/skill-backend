@@ -30,16 +30,15 @@ const parseWebhookBody = (body) => {
   return body;
 };
 
+/**
+ * Convert price to paise for Razorpay.
+ * m4 FIX: Always multiply by 100 — all prices stored in rupees.
+ * No heuristic guessing. DB stores rupees, gateway expects paise.
+ */
 const normalizePriceToPaise = (price) => {
   const numericPrice = Number(price || 0);
   if (!Number.isFinite(numericPrice) || numericPrice <= 0) return 0;
-
-  // Legacy rows may store rupees (e.g. 299) while gateway expects paise.
-  if (numericPrice < 1000) {
-    return Math.round(numericPrice * 100);
-  }
-
-  return Math.round(numericPrice);
+  return Math.round(numericPrice * 100);
 };
 
 const upsertEnrollmentForPayment = async (db, payment) => {
@@ -139,6 +138,7 @@ const createOrder = async (req, res, next) => {
       internshipDescription,
     } = req.validatedBody;
     const userId = req.user.id;
+    console.log(`[CREATE ORDER] Start userId=${userId} internshipId=${internshipId || 'N/A'} amount=${amount}`);
 
     if (process.env.NODE_ENV !== 'production') {
       console.log('[createOrder] Received internship payload', {
@@ -183,26 +183,9 @@ const createOrder = async (req, res, next) => {
       }
     }
 
-    // If internship does not yet exist in DB, create from trusted frontend metadata.
-    if (!internship && internshipTitle) {
-      internship = await prisma.internship.create({
-        data: {
-          title: internshipTitle,
-          domain: internshipDomain || 'General',
-          duration: internshipDuration || '4 Weeks',
-          level: internshipLevel || 'Beginner Friendly',
-          description: internshipDescription || null,
-          price: Math.round(amount * 100),
-        },
-        select: { id: true, title: true, duration: true, level: true, domain: true, description: true, price: true },
-      });
-
-      console.log('[createOrder] Internship created from metadata fallback', {
-        internshipId: internship.id,
-        internshipTitle: internship.title,
-        internshipPrice: internship.price,
-      });
-    }
+    // C2 FIX: Internship auto-creation from frontend metadata has been REMOVED.
+    // All internships must exist in the database (seeded via admin or migration).
+    // Accepting untrusted frontend data to create DB records was a security risk.
 
     if (!internship) {
       console.log('[createOrder] Internship resolution failed', { internshipId, internshipTitle });
@@ -316,6 +299,7 @@ const createOrder = async (req, res, next) => {
         internshipId: resolvedInternshipId,
       }
     });
+    console.log(`[CREATE ORDER] DB insert OK paymentId=${payment.id} orderId=${order.id}`);
 
     res.json(ApiResponse.success(
       { orderId: order.id, paymentId: payment.id, amount: amountInPaise / 100, internshipId: resolvedInternshipId },
@@ -337,6 +321,7 @@ const verifyPaymentEndpoint = async (req, res, next) => {
   try {
     const { razorpay_order_id, razorpay_payment_id, razorpay_signature, paymentId, internshipId } = req.validatedBody;
     const userId = req.user?.id || null;
+    console.log(`[VERIFY PAYMENT] Start paymentId=${paymentId} orderId=${razorpay_order_id}`);
 
     const paymentWhere = {
       id: paymentId,
@@ -426,6 +411,7 @@ const verifyPaymentEndpoint = async (req, res, next) => {
 
       await upsertEnrollmentForPayment(tx, payment);
     });
+    console.log(`[VERIFY PAYMENT] DB update OK paymentId=${payment.id} status=SUCCESS`);
 
     const refreshedPayment = await prisma.payment.findUnique({
       where: { id: payment.id },
@@ -448,7 +434,8 @@ const verifyPaymentEndpoint = async (req, res, next) => {
         userName: emailPayment.user.name,
         internshipTitle: internshipData.title,
         amount: emailPayment.amount / 100 // convert from paise to rupees
-      }).catch(err => console.error('Payment receipt email failed:', err.message));
+      }).then(() => console.log(`[VERIFY PAYMENT] Receipt email queued to=${emailPayment.user.email}`))
+        .catch(err => console.error(`[VERIFY PAYMENT] Receipt email FAILED err=${err.message}`));
     }
 
     res.json(ApiResponse.success(
@@ -474,6 +461,7 @@ const refundPaymentEndpoint = async (req, res, next) => {
   try {
     const { paymentId, amount, reason } = req.validatedBody;
     const userId = req.user.id;
+    console.log(`[REFUND] Start paymentId=${paymentId} userId=${userId}`);
 
     if (!paymentService.razorpay) {
       return next(new ApiError('Payment gateway not configured', 503, 'GATEWAY_DOWN'));
@@ -532,6 +520,7 @@ const generateCertificate = async (req, res, next) => {
   try {
     const { internshipId } = req.validatedBody;
     const userId = req.user.id;
+    console.log(`[GENERATE CERT] Start userId=${userId} internshipId=${internshipId}`);
 
     // Check internship exists
     const internship = await prisma.internship.findUnique({
@@ -600,6 +589,7 @@ const generateCertificate = async (req, res, next) => {
         isPaid: true
       }
     });
+    console.log(`[GENERATE CERT] DB insert OK certId=${certId}`);
 
     await prisma.userInternship.update({
       where: { userId_internshipId: { userId, internshipId } },
@@ -614,7 +604,8 @@ const generateCertificate = async (req, res, next) => {
         userName: user.name,
         internshipTitle: internship.title,
         certificateId: certId
-      }).catch(err => console.error('Certificate email failed:', err.message));
+      }).then(() => console.log(`[GENERATE CERT] Email queued to=${user.email}`))
+        .catch(err => console.error(`[GENERATE CERT] Email FAILED err=${err.message}`));
     }
 
     res.json(ApiResponse.success(
@@ -628,8 +619,8 @@ const generateCertificate = async (req, res, next) => {
 };
 
 /**
- * Generate Secure PDF Certificate
- * Publicly verifiable endpoint 
+ * Legacy PDF endpoint (deprecated)
+ * Redirects to the unified frontend certificate view so preview/download share one source.
  */
 const downloadPdf = async (req, res, next) => {
   try {
@@ -647,20 +638,13 @@ const downloadPdf = async (req, res, next) => {
       return next(new ApiError('Certificate not found', 404, 'CERTIFICATE_NOT_FOUND'));
     }
 
-    const { generateCertificatePdf } = require('../utils/pdfGenerator');
-    
-    const pdfBuffer = await generateCertificatePdf({
-      studentName: certificate.user.name,
-      internship: certificate.internship.title,
-      issueDate: certificate.issuedDate,
-      certificateId: certificate.certificateId
-    });
+    const frontendBase = (process.env.FRONTEND_URL || '').trim().replace(/\/+$/, '');
+    const certificatePath = `/certificate/${encodeURIComponent(certificate.certificateId)}`;
+    const redirectUrl = frontendBase ? `${frontendBase}${certificatePath}` : certificatePath;
 
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename=SkillBridge-Certificate-${certificate.certificateId}.pdf`);
-    res.end(pdfBuffer);
+    return res.redirect(302, redirectUrl);
   } catch (error) {
-    next(new ApiError(`PDF generation failed: ${error.message}`, 500, 'PDF_FAILED'));
+    next(new ApiError(`Certificate redirect failed: ${error.message}`, 500, 'REDIRECT_FAILED'));
   }
 };
 
@@ -703,7 +687,7 @@ const downloadCertificate = async (req, res, next) => {
         college: certificate.user.college,
         program: certificate.internship.title,
         issuedDate: certificate.issuedDate,
-        downloadUrl: `/api/certificates/${certificate.id}/pdf`
+        downloadUrl: `/certificate/${certificate.certificateId}`
       },
       'Certificate data retrieved successfully',
       200
@@ -829,6 +813,7 @@ const razorpayWebhook = async (req, res, next) => {
 
     const parsed = parseWebhookBody(req.body);
     const { event, payload } = parsed;
+    console.log(`[WEBHOOK] Received event=${event}`);
 
     if (event === 'payment.failed') {
       const paymentEntity = payload.payment.entity;
@@ -893,6 +878,7 @@ const razorpayWebhook = async (req, res, next) => {
         }
 
         await reconcileSuccessfulPayment(payment, { notify: !alreadySuccessful });
+        console.log(`[WEBHOOK] Payment processed orderId=${orderId} paymentId=${paymentId} alreadySuccess=${alreadySuccessful}`);
 
         if (!alreadySuccessful && payment.user) {
           const internshipData = payment.internship || (payment.certificate && payment.certificate.internship);
@@ -904,7 +890,8 @@ const razorpayWebhook = async (req, res, next) => {
               userName: payment.user.name,
               internshipTitle: internshipData.title,
               amount: payment.amount / 100
-            }).catch(err => console.error('Webhook payment email failed:', err.message));
+            }).then(() => console.log(`[WEBHOOK] Receipt email queued`))
+              .catch(err => console.error(`[WEBHOOK] Receipt email FAILED err=${err.message}`));
           }
         }
       }

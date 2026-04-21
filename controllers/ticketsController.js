@@ -27,6 +27,7 @@ const createTicket = async (req, res, next) => {
         status: 'OPEN'
       }
     });
+    console.log(`[TICKET CREATE] DB insert OK ticketId=${ticket.id} userId=${userId}`);
 
     res.status(201).json(ApiResponse.success(ticket, 'Ticket created successfully', 201));
   } catch (error) {
@@ -92,6 +93,7 @@ const updateTicketStatus = async (req, res, next) => {
 const replyToTicket = async (req, res, next) => {
   try {
     const { ticketId, reply, status } = req.validatedBody;
+    console.log(`[TICKET REPLY] Start ticketId=${ticketId}`);
 
     const ticket = await prisma.ticket.findUnique({
       where: { id: ticketId },
@@ -111,6 +113,7 @@ const replyToTicket = async (req, res, next) => {
       },
       include: { user: { select: { id: true, name: true, email: true } } },
     });
+    console.log(`[TICKET REPLY] DB update OK ticketId=${ticketId} newStatus=${updatedTicket.status}`);
 
     let emailSent = false;
     try {
@@ -121,6 +124,7 @@ const replyToTicket = async (req, res, next) => {
         replyMessage: reply.trim(),
       });
       emailSent = true;
+      console.log(`[TICKET REPLY] Email sent to=${updatedTicket.user.email}`);
     } catch (emailError) {
       console.error('Support reply email failed:', emailError.message);
     }

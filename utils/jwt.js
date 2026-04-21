@@ -16,12 +16,13 @@ const getSecret = (secretName = 'JWT_SECRET') => {
 };
 
 /**
- * Generate a signed JWT with issuer/audience claims.
+ * Generate a signed JWT with issuer/audience claims and purpose.
  * Default expiry: 7 days (reduced from 30d for security).
+ * C5 FIX: purpose claim prevents token cross-use attacks.
  */
-const generateToken = (userId, expiresIn = '7d', secretName = 'JWT_SECRET') => {
+const generateToken = (userId, expiresIn = '7d', secretName = 'JWT_SECRET', purpose = 'auth') => {
   return jwt.sign(
-    { id: userId },
+    { id: userId, purpose },
     getSecret(secretName),
     {
       expiresIn,
@@ -32,21 +33,26 @@ const generateToken = (userId, expiresIn = '7d', secretName = 'JWT_SECRET') => {
 };
 
 const generateResetToken = (userId) => {
-  return generateToken(userId, '1h', 'JWT_RESET_SECRET');
+  return generateToken(userId, '1h', 'JWT_RESET_SECRET', 'password_reset');
 };
 
 const generateVerificationToken = (userId) => {
-  return generateToken(userId, '24h', 'JWT_VERIFY_EMAIL_SECRET');
+  return generateToken(userId, '24h', 'JWT_VERIFY_EMAIL_SECRET', 'email_verify');
 };
 
 /**
- * Verify a JWT. Validates issuer/audience claims.
+ * Verify a JWT. Validates issuer/audience claims and purpose.
+ * C5 FIX: expectedPurpose prevents token cross-use.
  */
-const verifyToken = (token, secretName = 'JWT_SECRET') => {
-  return jwt.verify(token, getSecret(secretName), {
+const verifyToken = (token, secretName = 'JWT_SECRET', expectedPurpose = 'auth') => {
+  const decoded = jwt.verify(token, getSecret(secretName), {
     issuer: JWT_ISSUER,
     audience: JWT_AUDIENCE,
   });
+  if (decoded.purpose && decoded.purpose !== expectedPurpose) {
+    throw new Error(`Token purpose mismatch: expected '${expectedPurpose}', got '${decoded.purpose}'`);
+  }
+  return decoded;
 };
 
 module.exports = {

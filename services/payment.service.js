@@ -94,6 +94,20 @@ const fetchOrderDetails = async (orderId) => {
   return client.orders.fetch(orderId);
 };
 
+const createRefund = async (razorpayPaymentId, refundPayload = {}) => {
+  const client = getRazorpayClient();
+
+  if (!client || !razorpayPaymentId) {
+    console.error('[REFUND] Cannot create refund: missing client or paymentId');
+    return null;
+  }
+
+  console.log(`[REFUND] Initiating refund for ${razorpayPaymentId}`, refundPayload);
+  const refund = await client.payments.refund(razorpayPaymentId, refundPayload);
+  console.log(`[REFUND] Refund created: ${refund.id} status=${refund.status}`);
+  return refund;
+};
+
 module.exports = {
   get razorpay() {
     return getRazorpayClient();
@@ -105,4 +119,5 @@ module.exports = {
   verifyPayment,
   fetchPaymentDetails,
   fetchOrderDetails,
+  createRefund,
 };

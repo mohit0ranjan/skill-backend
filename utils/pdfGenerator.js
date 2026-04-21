@@ -1,6 +1,19 @@
-const PDFDocument = require('pdfkit');
+const PDFKitModule = require('pdfkit');
+const PDFDocument = PDFKitModule?.default || PDFKitModule;
 const path = require('path');
 const fs = require('fs');
+
+const resolveAssetPath = (fileName) => {
+  const candidates = [
+    process.env.CERTIFICATE_ASSETS_DIR ? path.join(process.env.CERTIFICATE_ASSETS_DIR, fileName) : null,
+    path.join(process.cwd(), 'public', fileName),
+    path.join(process.cwd(), '..', 'public', fileName),
+    path.join(__dirname, '..', 'public', fileName),
+    path.join(__dirname, '..', '..', 'public', fileName),
+  ].filter(Boolean);
+
+  return candidates.find((assetPath) => fs.existsSync(assetPath)) || null;
+};
 
 const generateCertificatePdf = async ({ studentName, internship, issueDate, certificateId }) => {
   return new Promise((resolve, reject) => {
@@ -91,27 +104,30 @@ const generateCertificatePdf = async ({ studentName, internship, issueDate, cert
 
       // Footer - Adding the MSME & Skill India Logos exactly like the UI
       const signatureY = 644;
-      
-      // Calculate paths to the frontend Next.js /public/ folder from backend folder
-      const publicFolder = path.join(__dirname, '../../public');
-      const msmeLogoPath = path.join(publicFolder, 'msme logo.png');
-      const skillIndiaLogoPath = path.join(publicFolder, 'skill india logo.png');
-      const signPath = path.join(publicFolder, 'sign.png');
+      const msmeLogoPath = resolveAssetPath('msme logo.png');
+      const skillIndiaLogoPath = resolveAssetPath('skill india logo.png');
+      const signPath = resolveAssetPath('sign.png');
 
       // Authority Logos (Bottom Left)
       doc.font('Helvetica-Bold').fillColor('#475569').fontSize(14).text(`Duration: 4 Weeks`, 60, signatureY - 15);
       doc.font('Helvetica-Bold').fillColor('#475569').fontSize(14).text(`Issue Date: ${issuedDate}`, 60, signatureY + 8);
       
-      if (fs.existsSync(msmeLogoPath)) {
+      if (msmeLogoPath) {
         doc.image(msmeLogoPath, 60, signatureY + 36, { height: 40 });
+      } else {
+        console.warn('[pdfGenerator] Missing asset: msme logo.png');
       }
-      if (fs.existsSync(skillIndiaLogoPath)) {
+      if (skillIndiaLogoPath) {
         doc.image(skillIndiaLogoPath, 175, signatureY + 36, { height: 40 });
+      } else {
+        console.warn('[pdfGenerator] Missing asset: skill india logo.png');
       }
 
       // Signature (Bottom Right)
-      if (fs.existsSync(signPath)) {
+      if (signPath) {
         doc.image(signPath, 840, signatureY - 20, { width: 132 });
+      } else {
+        console.warn('[pdfGenerator] Missing asset: sign.png');
       }
       doc.lineWidth(1).strokeColor('#0f172a');
       doc.moveTo(820, signatureY + 28).lineTo(1020, signatureY + 28).stroke();

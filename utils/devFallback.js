@@ -3,13 +3,19 @@ const crypto = require('crypto');
 
 /**
  * DEV FALLBACK SYSTEM — DEVELOPMENT ONLY
- * This entire module is gated behind NODE_ENV === 'development'.
- * In production/staging, all fallback functions return null/false.
+ * M2 FIX: Gated behind NODE_ENV === 'development' AND ALLOW_DEV_FALLBACK === 'true'.
+ * Throws an error if required in production to prevent accidental import.
  */
-const IS_DEV = process.env.NODE_ENV === 'development';
+if (process.env.NODE_ENV === 'production') {
+  console.error('🚨 [SECURITY FATAL] devFallback.js is being loaded in production. Execution halted.');
+  // Throwing prevents the module from initializing any mock data in memory
+  throw new Error('devFallback cannot be loaded in production environment.');
+}
+
+const IS_DEV = process.env.NODE_ENV === 'development' && process.env.ALLOW_DEV_FALLBACK === 'true';
 
 if (IS_DEV) {
-  console.warn('⚠️  [SECURITY] Dev fallback system is ACTIVE. This must NEVER run in production.');
+  console.warn('⚠️  [SECURITY] Dev fallback system is ACTIVE. ALLOW_DEV_FALLBACK is set to true.');
 }
 
 // Use a random password for dev users each startup — never use a known password

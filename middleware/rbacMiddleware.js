@@ -5,17 +5,17 @@
 
 const { ApiError } = require('../utils/apiResponse');
 
+const normalizeRole = (role) => String(role || '').trim().toUpperCase();
+
 /**
  * Verify user is admin
  */
 const adminOnly = async (req, res, next) => {
   try {
-    if (!req.user) {
-      return next(new ApiError('Unauthorized', 401, 'UNAUTHORIZED'));
-    }
+    const role = normalizeRole(req.user?.role);
 
-    if (req.user.role !== 'ADMIN') {
-      return next(new ApiError('Forbidden: Admin access required', 403, 'FORBIDDEN'));
+    if (!req.user || role !== 'ADMIN') {
+      return next(new ApiError('Forbidden: admin access required', 403, 'FORBIDDEN'));
     }
 
     next();
@@ -29,11 +29,13 @@ const adminOnly = async (req, res, next) => {
  */
 const studentOnly = async (req, res, next) => {
   try {
+    const role = normalizeRole(req.user?.role);
+
     if (!req.user) {
       return next(new ApiError('Unauthorized', 401, 'UNAUTHORIZED'));
     }
 
-    if (req.user.role !== 'USER') {
+    if (role !== 'USER') {
       return next(new ApiError('Forbidden: Student access required', 403, 'FORBIDDEN'));
     }
 
@@ -49,6 +51,8 @@ const studentOnly = async (req, res, next) => {
 const ownsResource = (resourceOwnerIdField = 'userId') => {
   return async (req, res, next) => {
     try {
+      const role = normalizeRole(req.user?.role);
+
       if (!req.user) {
         return next(new ApiError('Unauthorized', 401, 'UNAUTHORIZED'));
       }
@@ -56,11 +60,11 @@ const ownsResource = (resourceOwnerIdField = 'userId') => {
       const resourceOwnerId = req.body[resourceOwnerIdField] || req.params[resourceOwnerIdField];
 
       // Fail-closed: if the owner ID field is missing, deny access (unless admin)
-      if (!resourceOwnerId && req.user.role !== 'ADMIN') {
+      if (!resourceOwnerId && role !== 'ADMIN') {
         return next(new ApiError('Forbidden: Resource owner could not be determined', 403, 'FORBIDDEN'));
       }
 
-      if (resourceOwnerId && resourceOwnerId !== req.user.id && req.user.role !== 'ADMIN') {
+      if (resourceOwnerId && resourceOwnerId !== req.user.id && role !== 'ADMIN') {
         return next(new ApiError('Forbidden: Cannot access this resource', 403, 'FORBIDDEN'));
       }
 

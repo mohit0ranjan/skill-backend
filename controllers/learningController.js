@@ -2,10 +2,12 @@ const prisma = require('../prisma');
 const { ApiResponse, ApiError } = require('../utils/apiResponse');
 const emailServiceModule = require('../services/email.service');
 const emailService = emailServiceModule.emailService || emailServiceModule;
+const { getProjectSubmissionEmailHtml } = require('../utils/emailTemplates');
 const { generateCertificateId } = require('../utils/generateCertificateId');
 const { buildCurriculumTasks, groupTasksByWeek } = require('../utils/internshipCurriculum');
 
 async function createOrReturnCertificate({ userId, internshipId }) {
+  console.log(`[CERTIFICATE AUTO-GEN] Start userId=${userId} internshipId=${internshipId}`);
   const finalSubmission = await prisma.finalProjectSubmission.findUnique({
     where: { userId_internshipId: { userId, internshipId } },
   });
@@ -37,6 +39,7 @@ async function createOrReturnCertificate({ userId, internshipId }) {
       isPaid: true,
     },
   });
+  console.log(`[CERTIFICATE AUTO-GEN] Created certId=${certificate.certificateId}`);
 
   // Fetch info carefully for email
   const user = await prisma.user.findUnique({ where: { id: userId } });
@@ -47,7 +50,8 @@ async function createOrReturnCertificate({ userId, internshipId }) {
       userName: user.name,
       internshipTitle: internship.title,
       certificateId: certificate.certificateId
-    }).catch(err => console.error('Certificate email failed:', err.message));
+    }).then(() => console.log(`[CERTIFICATE AUTO-GEN] Email queued to=${user.email}`))
+      .catch(err => console.error(`[CERTIFICATE AUTO-GEN] Email FAILED err=${err.message}`));
   }
 
   return certificate;
@@ -135,6 +139,7 @@ const markWeekComplete = async (req, res, next) => {
   try {
     const { internshipId, weekNumber } = req.validatedBody;
     const userId = req.user.id;
+    console.log(`[WEEK COMPLETE] userId=${userId} internshipId=${internshipId} week=${weekNumber}`);
 
     const enrollment = await prisma.userInternship.findUnique({
       where: { userId_internshipId: { userId, internshipId } },
@@ -171,6 +176,7 @@ const submitProject = async (req, res, next) => {
   try {
     const { internshipId, projectTitle, projectLink, description, fileUrl } = req.validatedBody;
     const userId = req.user.id;
+    console.log(`[PROJECT SUBMIT] Start userId=${userId} internshipId=${internshipId} title="${projectTitle}"`);
 
     const internship = await prisma.internship.findUnique({
       where: { id: internshipId },
@@ -221,6 +227,7 @@ const submitProject = async (req, res, next) => {
         submittedAt: new Date(),
       },
     });
+    console.log(`[PROJECT SUBMIT] DB upsert OK submissionId=${submission.id} status=${submission.status}`);
 
     const taskWeeks = internship.tasks.length > 0 ? [...new Set(internship.tasks.map((task) => task.week))].length : buildCurriculumTasks(internship).length;
     const completedWeeks = Math.max(enrollment.completedWeeks || 0, taskWeeks);
@@ -243,20 +250,13 @@ const submitProject = async (req, res, next) => {
       emailService.send({
         to: user.email,
         subject: `Your project was submitted - ${internship.title}`,
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 620px; margin: 0 auto; background: #ffffff; border: 1px solid #e5e7eb; border-radius: 16px; overflow: hidden;">
-            <div style="padding: 28px; background: linear-gradient(135deg, #16a34a, #22c55e); color: white;">
-              <h1 style="margin: 0; font-size: 28px;">Submission received</h1>
-              <p style="margin: 8px 0 0; opacity: 0.95;">Your final project is now awaiting review (usually within 24 hours).</p>
-            </div>
-            <div style="padding: 28px; color: #111827;">
-              <p style="font-size: 16px; margin-top: 0;">Hi ${user.name},</p>
-              <p style="font-size: 15px; line-height: 1.7; color: #4b5563;">We received your final project for <strong>${internship.title}</strong>. Our team usually reviews submissions within 24 hours. You will be notified once approved and your certificate is generated.</p>
-              <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}/dashboard" style="display: inline-block; margin-top: 18px; background: #111827; color: white; text-decoration: none; padding: 12px 20px; border-radius: 10px; font-weight: 600;">Open Dashboard</a>
-            </div>
-          </div>
-        `,
-      }).catch((error) => console.error('Certificate email failed:', error.message));
+        html: getProjectSubmissionEmailHtml({
+          name: user.name,
+          internshipTitle: internship.title,
+          dashboardUrl: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/dashboard`,
+        }),
+      }).then(() => console.log(`[PROJECT SUBMIT] Email queued to=${user.email}`))
+        .catch((error) => console.error(`[PROJECT SUBMIT] Email FAILED err=${error.message}`));
     }
 
     res.status(201).json(ApiResponse.success(

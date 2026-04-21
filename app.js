@@ -1,9 +1,11 @@
 require('dotenv').config();
+const { randomUUID } = require('crypto');
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const { ApiResponse, ApiError } = require('./utils/apiResponse');
+const logger = require('./utils/logger');
 const prisma = require('./prisma');
 
 const authRoutes = require('./routes/auth');
@@ -14,6 +16,8 @@ const learningRoutes = require('./routes/learning');
 const certificateRoutes = require('./routes/certificates');
 const ticketRoutes = require('./routes/tickets');
 const adminRoutes = require('./routes/admin');
+const workspaceRoutes = require('./routes/workspace');
+const screeningRoutes = require('./routes/screening');
 
 const app = express();
 
@@ -21,14 +25,25 @@ const app = express();
 // SECURITY MIDDLEWARE
 // ============================================
 
-// Helmet: Set various HTTP headers for security
-app.use(helmet());
+// L1/L2 FIX: Use Helmet with explicit CSP instead of deprecated X-XSS-Protection
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+      fontSrc: ["'self'", 'https://fonts.gstatic.com'],
+      imgSrc: ["'self'", 'data:', 'https:'],
+      connectSrc: ["'self'"],
+    },
+  },
+}));
 
 // Additional security headers
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
-  res.setHeader('X-XSS-Protection', '1; mode=block');
+  // L1 FIX: Removed deprecated X-XSS-Protection — use CSP instead
   res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
@@ -44,79 +59,133 @@ const allowedOrigins = [
   ...envOrigins
 ].filter(Boolean);
 
+// M5 FIX: Paths that legitimately have no Origin header (health probes, webhooks)
+const NO_ORIGIN_ALLOWED_PATHS = ['/health', '/', '/favicon.ico', '/razorpay-webhook', '/webhooks/razorpay'];
+
 const corsOptions = {
   origin: (origin, callback) => {
-    // Allow requests with no origin (curl, server-to-server) or matching origins
-    if (!origin || allowedOrigins.includes(origin.replace(/\/$/, ''))) {
-      callback(null, true);
-    } else {
-      console.warn(`Blocked by CORS: origin ${origin} not in allowed list [${allowedOrigins}]`);
-      callback(null, false);
+    if (origin && allowedOrigins.includes(origin.replace(/\/$/, ''))) {
+      return callback(null, true);
     }
+    // In development, allow no-origin requests (curl, Postman)
+    if (!origin && process.env.NODE_ENV !== 'production') {
+      return callback(null, true);
+    }
+    // C8 FIX: In production, only allow null-origin for health/webhook paths.
+    // Deny all other null-origin requests in the CORS callback itself.
+    if (!origin && process.env.NODE_ENV === 'production') {
+      const isWhitelisted = NO_ORIGIN_ALLOWED_PATHS.some(p => req.path === p || req.path.startsWith(p));
+      if (!isWhitelisted) {
+        logger.warn('cors.blocked_null_origin', { path: req.path });
+        return callback(null, false);
+      }
+      return callback(null, true);
+    }
+    if (!origin) {
+      return callback(null, true); // dev: allow no-origin
+    }
+    logger.warn('cors.blocked_origin', { origin, allowedOrigins });
+    callback(null, false);
   },
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   credentials: true,
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Request-Id'],
   preflightContinue: false,
   optionsSuccessStatus: 204
 };
 
 app.use(cors(corsOptions));
-// app.use(cors(...)) already handles preflight OPTIONS responses.
+
+// M5 FIX: Block no-origin requests to sensitive paths in production
+if (process.env.NODE_ENV === 'production') {
+  app.use((req, res, next) => {
+    if (!req.headers.origin && !NO_ORIGIN_ALLOWED_PATHS.includes(req.path)) {
+      return res.status(403).json(ApiResponse.error('Origin header required', 403, 'CORS_ORIGIN_REQUIRED'));
+    }
+    next();
+  });
+}
 
 // ============================================
 // REQUEST PARSING
 // ============================================
 
-// Razorpay webhook needs the raw body before JSON parsing consumes the stream.
-app.use(['/razorpay-webhook', '/webhooks/razorpay'], express.raw({ type: 'application/json' }));
+// M10 FIX: Razorpay webhook needs raw body — add explicit size limit
+app.use(['/razorpay-webhook', '/webhooks/razorpay'], express.raw({ type: 'application/json', limit: '1mb' }));
 
 // Body parsing with size limits
 app.use(express.json({ limit: '10kb' }));
 app.use(express.urlencoded({ extended: true, limit: '10kb' }));
 
+// Request timeout guard to prevent hung connections from consuming workers.
+app.use((req, res, next) => {
+  res.setTimeout(30000, () => {
+    if (!res.headersSent) {
+      res.status(504).json(ApiResponse.error('Request timed out', 504, 'REQUEST_TIMEOUT'));
+    }
+  });
+  next();
+});
+
 // ============================================
-// RATE LIMITING
+// RATE LIMITING (M6 FIX: bounded limits instead of unbounded skip)
 // ============================================
 
-// Global rate limiter for all requests
+// Global rate limiter for mutating/write requests
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 100,
   message: 'Too many requests from this IP, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,
-  skip: (req) => {
-    if (req.path === '/health' || req.path === '/') return true;
-
-    // These are read-only dashboard/data endpoints that can be hit frequently
-    // during development and page hydration. Keep them available so UI loads
-    // do not fail with rate-limit errors.
-    if (req.method === 'GET' && (
-      req.path === '/dashboard' ||
-      req.path.startsWith('/learning-plan') ||
-      req.path.startsWith('/internships') ||
-      req.path.startsWith('/certificate') ||
-      req.path.startsWith('/verify') ||
-      req.path.startsWith('/admin/dashboard') ||
-      req.path.startsWith('/admin/certificates')
-    )) {
-      return true;
-    }
-
-    return false;
-  },
+  skip: (req) => req.path === '/health' || req.path === '/' || req.path === '/favicon.ico',
 });
 
-app.use(globalLimiter);
+// Higher limit for read-only/data-fetch endpoints
+const readOnlyLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 // Auth-specific rate limiter (stricter)
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10,
-  message: 'Too many authentication attempts, please try again later.',
+  max: process.env.NODE_ENV === 'production' ? 10 : 50,
+  skipSuccessfulRequests: true,
+  message: 'Too many failed authentication attempts, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,
+});
+
+// Payment endpoints are abuse-prone; enforce stricter per-IP throttling.
+const paymentLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: process.env.NODE_ENV === 'production' ? 30 : 120,
+  message: 'Too many payment requests from this IP, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const adminLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: process.env.NODE_ENV === 'production' ? 120 : 400,
+  message: 'Too many admin requests from this IP, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+app.use(globalLimiter);
+
+// ============================================
+// M8 FIX: REQUEST CORRELATION ID
+// ============================================
+
+app.use((req, res, next) => {
+  req.id = req.headers['x-request-id'] || randomUUID();
+  res.setHeader('X-Request-Id', req.id);
+  next();
 });
 
 // ============================================
@@ -127,9 +196,14 @@ app.use((req, res, next) => {
   const start = Date.now();
   res.on('finish', () => {
     const duration = Date.now() - start;
-    const log = `[${new Date().toISOString()}] ${req.method} ${req.path} - ${res.statusCode} (${duration}ms)`;
-    if (res.statusCode >= 400) {
-      console.error(log);
+    if (res.statusCode >= 400 || process.env.NODE_ENV !== 'production') {
+      logger.info('http.request', {
+        requestId: req.id,
+        method: req.method,
+        path: req.path,
+        statusCode: res.statusCode,
+        durationMs: duration,
+      });
     }
   });
   next();
@@ -195,17 +269,29 @@ app.get('/api/docs', (req, res) => {
 });
 
 // ============================================
-// API ROUTES
+// API ROUTES (m2 FIX: API Versioning)
 // ============================================
 
-app.use('/auth', authLimiter, authRoutes);
-app.use('/internships', internshipRoutes);
-app.use('/', userRoutes);
-app.use('/', taskRoutes);
-app.use('/', learningRoutes);
-app.use('/', certificateRoutes);
-app.use('/', ticketRoutes);
-app.use('/admin', adminRoutes);
+const apiRouter = express.Router();
+
+apiRouter.use('/auth', authLimiter, authRoutes);
+apiRouter.use('/internships', readOnlyLimiter, internshipRoutes);
+apiRouter.use(['/create-order', '/verify-payment', '/refund', '/payment-failed'], paymentLimiter);
+apiRouter.use('/', userRoutes);
+apiRouter.use('/', taskRoutes);
+apiRouter.use('/', learningRoutes);
+apiRouter.use('/', certificateRoutes);
+apiRouter.use('/', ticketRoutes);
+apiRouter.use('/admin', adminLimiter, adminRoutes);
+apiRouter.use('/workspace', workspaceRoutes);
+apiRouter.use('/screening', screeningRoutes);
+
+app.use('/api/v1', apiRouter);
+// H1 FIX: Removed legacy unversioned mount (`app.use('/', apiRouter)`).
+// This was bypassing rate limiters applied to /api/v1/* paths.
+
+// Legacy compatibility for clients still calling /admin/* directly.
+app.use('/admin', adminLimiter, adminRoutes);
 
 // ============================================
 // ERROR HANDLING
@@ -261,7 +347,13 @@ app.use((err, req, res, next) => {
   }
 
   // Generic error handler
-  console.error('🔴 Unhandled error:', err);
+  logger.error('http.unhandled_error', {
+    requestId: req?.id,
+    method: req?.method,
+    path: req?.path,
+    errorName: err?.name,
+    errorMessage: err?.message,
+  });
   const response = ApiResponse.error(
     'Internal server error',
     500,
@@ -269,91 +361,6 @@ app.use((err, req, res, next) => {
     process.env.NODE_ENV === 'development' ? err.message : null
   );
   res.status(500).json(response);
-});
-
-// ============================================
-// START SERVER
-// ============================================
-
-const PORT = process.env.PORT || 5000;
-const NODE_ENV = process.env.NODE_ENV || 'production';
-let server;
-
-// Azure runs `node app.js` directly → require.main === module is TRUE.
-// Tests do `require('./app')` → require.main !== module, so listen is skipped.
-if (require.main === module) {
-  server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`
-╔════════════════════════════════════════╗
-║     🚀 SkillBridge API Server 🚀      ║
-╠════════════════════════════════════════╣
-║  Environment: ${NODE_ENV.padEnd(28)} ║
-║  Port: ${PORT.toString().padEnd(33)} ║
-║  Status: ✅ Running                   ║
-╚════════════════════════════════════════╝
-    `);
-    console.log(`📍 API: http://0.0.0.0:${PORT}`);
-    console.log(`📍 Health: http://0.0.0.0:${PORT}/health`);
-    console.log(`📍 Docs: http://0.0.0.0:${PORT}/api/docs`);
-
-    // Non-blocking DB connection test logged after startup
-    if (typeof prisma.testConnection === 'function') {
-      prisma.testConnection().catch(() => {});
-    }
-  });
-}
-
-// ============================================
-// GRACEFUL SHUTDOWN
-// ============================================
-
-function shutdown(signal) {
-  console.log(`\n${signal} received. Starting graceful shutdown...`);
-
-  if (!server) {
-    process.exit(0);
-    return;
-  }
-
-  server.close(async (err) => {
-    if (err) {
-      console.error('Error during server shutdown:', err);
-      process.exit(1);
-      return;
-    }
-
-    // Disconnect Prisma pool
-    try {
-      if (typeof prisma.disconnect === 'function') {
-        await prisma.disconnect();
-        console.log('Database pool closed.');
-      }
-    } catch (e) {
-      console.error('Error closing database pool:', e.message);
-    }
-
-    console.log('HTTP server closed cleanly.');
-    process.exit(0);
-  });
-
-  // Force exit if graceful shutdown takes too long.
-  setTimeout(() => {
-    console.error('Forcing shutdown after timeout.');
-    process.exit(1);
-  }, 15000).unref();
-}
-
-process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('SIGINT', () => shutdown('SIGINT'));
-
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('🔴 Unhandled Rejection at:', promise, 'reason:', reason);
-});
-
-process.on('uncaughtException', (err) => {
-  console.error('🔴 Uncaught Exception:', err);
-  // Give time for logs to flush before exiting
-  setTimeout(() => process.exit(1), 1000).unref();
 });
 
 module.exports = app;

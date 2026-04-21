@@ -61,6 +61,7 @@ const submitTask = async (req, res, next) => {
   try {
     const { taskId, githubLink } = req.validatedBody;
     const userId = req.user.id;
+    console.log(`[TASK SUBMIT] Start userId=${userId} taskId=${taskId}`);
 
     const task = await prisma.task.findUnique({ where: { id: taskId } });
     if (!task) {
@@ -97,6 +98,7 @@ const submitTask = async (req, res, next) => {
         updatedAt: new Date()
       }
     });
+    console.log(`[TASK SUBMIT] DB upsert OK submissionId=${submission.id} status=${submission.status}`);
 
     res.json(ApiResponse.success(
       { submission },
@@ -116,6 +118,7 @@ const evaluateSubmission = async (req, res, next) => {
   try {
     const { id } = req.params;
     const { status, feedback } = req.validatedBody;
+    console.log(`[TASK EVALUATE] Start submissionId=${id} status=${status}`);
 
     const submission = await prisma.submission.findUnique({
       where: { id },
@@ -133,6 +136,7 @@ const evaluateSubmission = async (req, res, next) => {
       where: { id },
       data: { status, feedback: feedback || null }
     });
+    console.log(`[TASK EVALUATE] DB update OK submissionId=${id} newStatus=${status}`);
 
     res.json(ApiResponse.success(
       { submission: updated },

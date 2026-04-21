@@ -11,7 +11,7 @@ const {
   downloadPdf,
   razorpayWebhook 
 } = require('../controllers/certificatesController');
-const { protect, optionalProtect } = require('../middleware/authMiddleware');
+const { protect } = require('../middleware/authMiddleware');
 const { validate } = require('../utils/validation');
 
 const router = express.Router();

@@ -82,6 +82,8 @@ model UserInternship {
   internship Internship @relation(fields: [internshipId], references: [id], onDelete: Cascade)
 
   @@unique([userId, internshipId])
+  @@index([userId])
+  @@index([internshipId])
 }
 
 model FinalProjectSubmission {
@@ -182,6 +184,9 @@ model Ticket {
   updatedAt DateTime     @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
 }
 
 // ENUMS

@@ -1,9 +1,13 @@
 const bcrypt = require('bcrypt');
 const prisma = require('../prisma');
-const { generateToken, generateResetToken, generateVerificationToken, verifyToken } = require('../utils/jwt');
+const { generateToken, generateResetToken, verifyToken } = require('../utils/jwt');
 const { ApiResponse, ApiError } = require('../utils/apiResponse');
 const emailServiceModule = require('../services/email.service');
 const emailService = emailServiceModule.emailService || emailServiceModule;
+const {
+  getPasswordResetRequestEmailHtml,
+  getPasswordResetSuccessEmailHtml,
+} = require('../utils/emailTemplates');
 const { isDatabaseUnavailableError, getFallbackUserByEmail, getFallbackUserById, fallbackUsers } = require('../utils/devFallback');
 
 /**
@@ -20,6 +24,7 @@ const signup = async (req, res, next) => {
 
   try {
     ({ name, email, password, college, year } = req.validatedBody);
+    console.log(`[SIGNUP] Start email=${email} name=${name}`);
 
     // Check if user already exists
     const userExists = await prisma.user.findUnique({
@@ -27,6 +32,7 @@ const signup = async (req, res, next) => {
     });
 
     if (userExists) {
+      console.log(`[SIGNUP] BLOCKED duplicate email=${email}`);
       return next(new ApiError('Email already registered', 400, 'DUPLICATE_EMAIL'));
     }
 
@@ -46,18 +52,16 @@ const signup = async (req, res, next) => {
         emailVerified: false,
       },
     });
+    console.log(`[SIGNUP] DB insert OK userId=${user.id} email=${user.email}`);
 
     // Generate JWT token
     const token = generateToken(user.id);
-    const verificationToken = generateVerificationToken(user.id);
-    const verifyLink = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/verify?token=${verificationToken}`;
-
     // Send onboarding email (non-blocking). Enrollment email is triggered only after paid enrollment.
     emailService.sendOnboardingWelcome({
       userEmail: user.email,
       userName: user.name,
-      verifyLink,
-    }).catch(err => console.error('Email send error:', err.message));
+    }).then(() => console.log(`[SIGNUP] Email queued to=${user.email}`))
+      .catch(err => console.error(`[SIGNUP] Email FAILED to=${user.email} err=${err.message}`));
 
     // Return response
     const response = ApiResponse.success(
@@ -74,6 +78,7 @@ const signup = async (req, res, next) => {
       201
     );
 
+    console.log(`[SIGNUP] Complete userId=${user.id}`);
     res.status(201).json(response);
   } catch (error) {
     if (isDatabaseUnavailableError(error) && process.env.NODE_ENV === 'development') {
@@ -131,6 +136,7 @@ const signup = async (req, res, next) => {
 const login = async (req, res, next) => {
   try {
     const { email, password } = req.validatedBody;
+    console.log(`[LOGIN] Attempt email=${email}`);
 
     // Find user
     let user;
@@ -147,6 +153,7 @@ const login = async (req, res, next) => {
     }
 
     if (!user) {
+      console.log(`[LOGIN] FAIL user not found email=${email}`);
       return next(new ApiError('Invalid email or password', 401, 'INVALID_CREDENTIALS'));
     }
 
@@ -154,6 +161,7 @@ const login = async (req, res, next) => {
     const isPasswordValid = await bcrypt.compare(password, user.password);
 
     if (!isPasswordValid) {
+      console.log(`[LOGIN] FAIL wrong password email=${email}`);
       return next(new ApiError('Invalid email or password', 401, 'INVALID_CREDENTIALS'));
     }
 
@@ -173,6 +181,7 @@ const login = async (req, res, next) => {
       'Login successful'
     );
 
+    console.log(`[LOGIN] Success userId=${user.id}`);
     res.json(response);
   } catch (error) {
     if (isDatabaseUnavailableError(error) && process.env.NODE_ENV === 'development') {
@@ -252,7 +261,7 @@ const logout = async (req, res, next) => {
   try {
     // In stateless JWT, logout is client-side (remove token from localStorage)
     // This endpoint is for audit/logging purposes
-    console.log(`User ${req.user.id} logged out`);
+    console.log(`[LOGOUT] userId=${req.user.id}`);
     const response = ApiResponse.success(null, 'Logout successful');
     res.json(response);
   } catch (error) {
@@ -268,6 +277,7 @@ const logout = async (req, res, next) => {
 const requestPasswordReset = async (req, res, next) => {
   try {
     const { email } = req.validatedBody;
+    console.log(`[RESET REQUEST] email=${email}`);
 
     const user = await prisma.user.findUnique({
       where: { email: email.toLowerCase() }
@@ -292,14 +302,10 @@ const requestPasswordReset = async (req, res, next) => {
     await emailService.send({
       to: user.email,
       subject: 'Password Reset Request — SkillBridge',
-      html: `
-        <h2>Password Reset</h2>
-        <p>Hi ${user.name},</p>
-        <p>You requested to reset your password. Click the link below to proceed:</p>
-        <p><a href="${resetLink}" style="background-color: #10b981; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Reset Password</a></p>
-        <p>This link expires in 1 hour.</p>
-        <p>If you didn't request this, please ignore this email.</p>
-      `
+      html: getPasswordResetRequestEmailHtml({
+        name: user.name,
+        resetLink,
+      }),
     }).catch(err => console.error('Reset email failed:', err.message));
 
     res.json(ApiResponse.success(
@@ -324,7 +330,7 @@ const resetPassword = async (req, res, next) => {
     // Decode token (token expired is caught by jwt verify)
     let userId;
     try {
-      const decoded = verifyToken(token, 'JWT_RESET_SECRET');
+      const decoded = verifyToken(token, 'JWT_RESET_SECRET', 'password_reset');
       userId = decoded.id;
     } catch (err) {
       return next(new ApiError('Reset link expired or invalid', 400, 'INVALID_TOKEN'));
@@ -344,16 +350,15 @@ const resetPassword = async (req, res, next) => {
       where: { id: userId },
       data: { password: hashedPassword }
     });
+    console.log(`[RESET PASSWORD] DB update OK userId=${userId}`);
 
     // Send confirmation email
     await emailService.send({
       to: user.email,
       subject: 'Password Reset Successful — SkillBridge',
-      html: `
-        <p>Hi ${user.name},</p>
-        <p>Your password has been successfully reset.</p>
-        <p>If you didn't make this change, please contact support immediately.</p>
-      `
+      html: getPasswordResetSuccessEmailHtml({
+        name: user.name,
+      }),
     }).catch(err => console.error('Confirmation email failed:', err.message));
 
     res.json(ApiResponse.success(
@@ -378,7 +383,7 @@ const verifyEmail = async (req, res, next) => {
     // Decode token
     let userId;
     try {
-      const decoded = verifyToken(token, 'JWT_VERIFY_EMAIL_SECRET');
+      const decoded = verifyToken(token, 'JWT_VERIFY_EMAIL_SECRET', 'email_verify');
       userId = decoded.id;
     } catch (err) {
       return next(new ApiError('Verification link expired or invalid', 400, 'INVALID_TOKEN'));
@@ -396,6 +401,7 @@ const verifyEmail = async (req, res, next) => {
         emailVerifiedAt: new Date(),
       },
     });
+    console.log(`[VERIFY EMAIL] Verified userId=${userId}`);
 
     res.json(ApiResponse.success(
       { verified: true },

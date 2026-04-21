@@ -14,6 +14,7 @@ const enroll = async (req, res, next) => {
   try {
     const { internshipId } = req.validatedBody;
     const userId = req.user.id;
+    console.log(`[ENROLL] Start userId=${userId} internshipId=${internshipId}`);
 
     // Check internship exists
     const internship = await prisma.internship.findUnique({
@@ -30,6 +31,7 @@ const enroll = async (req, res, next) => {
     });
 
     if (existingEnrollment) {
+      console.log(`[ENROLL] BLOCKED already enrolled userId=${userId} internshipId=${internshipId}`);
       return next(new ApiError('You are already enrolled in this internship', 400, 'ALREADY_ENROLLED'));
     }
 
@@ -50,6 +52,7 @@ const enroll = async (req, res, next) => {
         progress: 0
       }
     });
+    console.log(`[ENROLL] DB insert OK enrollmentId=${enrollment.id}`);
 
     // Get user details for email
     const user = await prisma.user.findUnique({
@@ -64,7 +67,8 @@ const enroll = async (req, res, next) => {
         userName: user.name,
         internshipTitle: internship.title,
         internshipDuration: internship.duration || '12 weeks'
-      }).catch(err => console.error('Enrollment email failed:', err.message));
+      }).then(() => console.log(`[ENROLL] Email queued to=${user.email}`))
+        .catch(err => console.error(`[ENROLL] Email FAILED to=${user.email} err=${err.message}`));
     }
 
     res.json(ApiResponse.success(
@@ -94,6 +98,7 @@ const enroll = async (req, res, next) => {
 const getDashboard = async (req, res, next) => {
   try {
     const userId = req.user.id;
+    console.log(`[DASHBOARD] Fetch userId=${userId}`);
 
     const [user, userInternships, finalSubmissions, certificates] = await Promise.all([
       prisma.user.findUnique({
